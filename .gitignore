@@ -2,10 +2,9 @@
 __pycache__/
 *.pyc
 
-# 打包产物
+# 打包产物（ToMe.exe.spec 是构建配置，需要提交，这里不忽略它）
 dist/
 build*/
-*.spec
 
 # 本地杂项
 *.log

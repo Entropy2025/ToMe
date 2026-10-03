@@ -5,44 +5,20 @@ import ctypes
 import json
 import os
 import sys
-import time
 import winreg
 
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal, QPointF
 from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QIcon,
-                           QPixmap, QAction, QLinearGradient, QFontDatabase,
-                           QGuiApplication)
+                           QPixmap, QAction, QLinearGradient, QFontDatabase)
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout,
                                QHBoxLayout, QLabel, QTextEdit, QPushButton,
                                QSlider, QComboBox, QCheckBox, QSystemTrayIcon,
                                QMenu, QFrame, QGridLayout, QListWidget,
-                               QListWidgetItem, QStackedWidget, QLineEdit,
-                               QMessageBox, QFileDialog)
+                               QListWidgetItem, QStackedWidget)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
-shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-
-# ---- 单实例唤起 Event ----
-EVENT_MODIFY_STATE = 0x0002
-WAIT_OBJECT_0 = 0
-ACT_EVENT_NAME = "ToMe_v9_ActivateEvent"
-kernel32.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_int,
-                                  ctypes.c_int, ctypes.c_wchar_p]
-kernel32.CreateEventW.restype = ctypes.c_void_p
-kernel32.OpenEventW.argtypes = [ctypes.c_uint32, ctypes.c_int,
-                                ctypes.c_wchar_p]
-kernel32.OpenEventW.restype = ctypes.c_void_p
-kernel32.SetEvent.argtypes = [ctypes.c_void_p]
-kernel32.SetEvent.restype = ctypes.c_int
-kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-kernel32.WaitForSingleObject.restype = ctypes.c_uint32
-
-# ---- 全屏免打扰 ----
-QUNS_RUNNING_D3D_FULL_SCREEN = 3
-shell32.SHQueryUserNotificationState.argtypes = [ctypes.POINTER(ctypes.c_int)]
-shell32.SHQueryUserNotificationState.restype = ctypes.c_long
 
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT = 0x00000020
@@ -66,8 +42,6 @@ DEFAULT_CFG = {
     "bold": False,
     "italic": False,
     "text_color": 0xFFFFFF,
-    "text_alpha": 100,       # 文字不透明度 0-100
-    "shadow_on": True,       # 文字投影（保证花哨壁纸上的可读性）
     "border_color": 0xFFFFFF,
     "border_alpha": 0,        # 0=隐形 100=实线
     "line_gap": 10,
@@ -76,8 +50,6 @@ DEFAULT_CFG = {
     "first_run": False,
     "lang": "zh",             # zh / en
     "theme": "auto",          # auto / dark / light
-    "fs_hide": True,          # 前台全屏（游戏/视频）时自动隐藏
-    "recent_colors": [],      # 取色器最近使用的自定义色（最多 8）
 }
 
 user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
@@ -155,21 +127,18 @@ def enable_mica(widget, dark):
 # ---------------- 多语言文案 ----------------
 STR = {
     "zh": {
+        "app": "念",
+        "brand": "念",
         "title": "念 · 设置",
+        "text_label": "文字（最多 %d 行）",
         "font": "字体…",
         "text_color": "文字颜色…",
         "border_color": "边框颜色…",
         "border_alpha": "边框透明度",
-        "text_alpha": "文字不透明度",
-        "shadow": "文字投影",
         "line_gap": "行间距 (px)",
         "align": "对齐",
         "aligns": ["左对齐", "居中", "右对齐"],
         "autorun": "开机自动启动",
-        "autorun_fail_t": "开机自启设置失败",
-        "autorun_fail_b": "无法写入注册表启动项，请检查系统权限后重试。",
-        "fs_hide": "全屏时自动隐藏（游戏/视频）",
-        "reset_pos": "重置位置和大小",
         "done": "完成",
         "ok": "确定",
         "lang_label": "界面语言",
@@ -179,38 +148,13 @@ STR = {
         "sec_text": "文字内容",
         "sec_style": "字体样式",
         "sec_misc": "其他设置",
-        "sec_history": "历史记录",
-        "hist_restore": "恢复",
-        "hist_pin": "置顶",
-        "hist_unpin": "取消置顶",
-        "hist_delete": "删除",
-        "hist_copy": "复制文字",
-        "hist_export": "导出…",
-        "hist_clear": "清空",
-        "hist_empty": "还没有历史记录。\n关闭设置窗口时，文字和样式会自动存成一条。",
-        "hist_tip": "选中一条可预览；置顶的不会被 100 条上限淘汰。",
-        "hist_clear_q": "确定清空未置顶的历史记录吗？\n置顶的记录会保留。",
-        "hist_clear_t": "清空历史",
-        "hist_clear_ok": "已清空未置顶的历史记录。",
-        "hist_copied_t": "已复制",
-        "hist_copied_b": "该条文字已复制到剪贴板。",
-        "hist_restored_t": "已恢复",
-        "hist_restored_b": "已恢复到所选版本；恢复前的状态也已存成一条历史。",
-        "hist_export_t": "导出完成",
-        "hist_export_b": "历史记录已导出到：\n%s",
-        "hist_export_fail": "导出失败：%s",
-        "hist_export_filter": "文本文件 (*.txt);;JSON 文件 (*.json)",
-        "hist_export_name": "ToMe-编辑历史",
-        "hist_pick_first": "请先在上面的列表里选一条历史。",
-        "hist_pick_t": "未选择",
-        "hist_count": "共 %d 条 · 置顶 %d 条",
         "font_size": "字号 (pt)",
         "tip": "念 — 桌面座右铭",
         "balloon_t": "念已就位",
         "balloon_b": "文字已贴在桌面。右键（或双击）托盘图标即可编辑。",
         "menu_edit": "编辑文字 / 位置",
         "menu_exit": "退出",
-        "fp_search": "搜索字体…",
+        "font_dlg": "选择字体",
         "fp_family": "字体",
         "fp_size": "字号",
         "fp_bold": "粗体",
@@ -220,21 +164,18 @@ STR = {
         "bc_dlg": "选择边框颜色",
     },
     "en": {
+        "app": "ToMe",
+        "brand": "T",
         "title": "ToMe · Settings",
+        "text_label": "Text (max %d lines)",
         "font": "Font…",
         "text_color": "Text color…",
         "border_color": "Border color…",
         "border_alpha": "Border opacity",
-        "text_alpha": "Text opacity",
-        "shadow": "Text shadow",
         "line_gap": "Line spacing (px)",
         "align": "Align",
         "aligns": ["Left", "Center", "Right"],
         "autorun": "Start with Windows",
-        "autorun_fail_t": "Could not change startup setting",
-        "autorun_fail_b": "Writing the Windows startup entry failed. Check your permissions and try again.",
-        "fs_hide": "Hide when a fullscreen app is active",
-        "reset_pos": "Reset position & size",
         "done": "Done",
         "ok": "OK",
         "lang_label": "Language",
@@ -244,38 +185,13 @@ STR = {
         "sec_text": "Text",
         "sec_style": "Font style",
         "sec_misc": "General",
-        "sec_history": "History",
-        "hist_restore": "Restore",
-        "hist_pin": "Pin",
-        "hist_unpin": "Unpin",
-        "hist_delete": "Delete",
-        "hist_copy": "Copy text",
-        "hist_export": "Export…",
-        "hist_clear": "Clear",
-        "hist_empty": "No history yet.\nClosing the settings window saves the current text and style as one entry.",
-        "hist_tip": "Select an entry to preview it. Pinned entries are never dropped by the 100-entry limit.",
-        "hist_clear_q": "Clear all unpinned history?\nPinned entries will be kept.",
-        "hist_clear_t": "Clear history",
-        "hist_clear_ok": "Unpinned history cleared.",
-        "hist_copied_t": "Copied",
-        "hist_copied_b": "This entry's text has been copied to the clipboard.",
-        "hist_restored_t": "Restored",
-        "hist_restored_b": "Restored to the selected version. The previous state was saved as a new entry.",
-        "hist_export_t": "Export complete",
-        "hist_export_b": "History exported to:\n%s",
-        "hist_export_fail": "Export failed: %s",
-        "hist_export_filter": "Text file (*.txt);;JSON file (*.json)",
-        "hist_export_name": "ToMe-history",
-        "hist_pick_first": "Please select a history entry first.",
-        "hist_pick_t": "Nothing selected",
-        "hist_count": "%d entries · %d pinned",
         "font_size": "Font size (pt)",
         "tip": "ToMe — desktop motto",
         "balloon_t": "ToMe is ready",
         "balloon_b": "Text pinned to desktop. Right-click (or double-click) the tray icon to edit.",
         "menu_edit": "Edit text / position",
         "menu_exit": "Exit",
-        "fp_search": "Search fonts…",
+        "font_dlg": "Choose font",
         "fp_family": "Font",
         "fp_size": "Size",
         "fp_bold": "Bold",
@@ -288,10 +204,7 @@ STR = {
 
 
 def tr(key):
-    # S["cfg"] 在 main() 之前为 None（例如单元测试或早期调用），
-    # 此时退回中文文案，而不是抛 AttributeError。
-    cfg = S.get("cfg") or {}
-    return STR[cfg.get("lang", "zh")][key]
+    return STR[S["cfg"].get("lang", "zh")][key]
 
 
 # ---------------- 配置 ----------------
@@ -312,10 +225,8 @@ def save_cfg(cfg=None):
         c["x"], c["y"], c["w"], c["h"] = g.x(), g.y(), g.width(), g.height()
     try:
         os.makedirs(APPDATA_DIR, exist_ok=True)
-        tmp = CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(c, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, CONFIG_FILE)   # 原子替换，避免写一半损坏配置
     except OSError:
         pass
 
@@ -335,184 +246,30 @@ def dbg(msg):
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE = "ToMe"          # 注册表启动项名称：HKCU\...\Run\ToMe
-
-
-def autorun_command():
-    """开机自启要登记的命令行。
-    打包成单文件 exe 后 sys.executable 就是 exe 自身；源码直跑时是
-    python.exe，此时补上脚本路径，保证开发态切换自启也是真的能启动。"""
-    if getattr(sys, "frozen", False):
-        return '"%s"' % sys.executable
-    return '"%s" "%s"' % (sys.executable, os.path.abspath(__file__))
-
-
-def autorun_entry():
-    """读取已登记的开机自启命令；没有登记返回 None。"""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            val, _ = winreg.QueryValueEx(k, RUN_VALUE)
-            return val
-    except OSError:
-        return None
 
 
 def is_autorun():
-    return autorun_entry() is not None
-
-
-def set_autorun(on):
-    """开启/关闭开机自启。返回 True 表示注册表确实写成功（UI 据此回滚）。"""
     try:
-        if on:
-            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                                    winreg.KEY_SET_VALUE) as k:
-                winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ,
-                                  autorun_command())
-        else:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                                winreg.KEY_SET_VALUE) as k:
-                try:
-                    winreg.DeleteValue(k, RUN_VALUE)
-                except FileNotFoundError:
-                    pass
-        dbg("autorun -> %s" % on)
-        return True
-    except OSError as e:
-        dbg("autorun set(%s) failed: %s" % (on, e))
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            winreg.QueryValueEx(k, "ToMe")
+            return True
+    except OSError:
         return False
 
 
-def sync_autorun():
-    """启动时自愈：若已开启自启、但登记的是旧路径（程序被移动或重装过），
-    改写为当前路径，避免开机时去启动一个已经不存在的 exe。"""
-    cur = autorun_entry()
-    if cur is None:
-        return
-    if cur.strip().lower() != autorun_command().strip().lower():
-        dbg("autorun path stale, repairing")
-        set_autorun(True)
-
-
-# ---------------- 编辑历史 ----------------
-# 每次关闭设置窗口时，把「文字 + 外观样式」落成一条历史，可随时回滚。
-# 存 %APPDATA%\ToMe\history.json，与 config.json 同目录；卸载不删。
-HISTORY_FILE = os.path.join(APPDATA_DIR, "history.json")
-HISTORY_MAX = 100          # 未置顶记录的条数上限（置顶的永久保留）
-HISTORY_FIELDS = ("text", "font_family", "font_pt", "bold", "italic",
-                  "text_color", "text_alpha", "shadow_on", "border_color",
-                  "border_alpha", "line_gap", "align")
-
-
-def history_snapshot(cfg):
-    """抽一份外观快照（不含窗口位置与大小）。"""
-    return {k: cfg.get(k, DEFAULT_CFG.get(k)) for k in HISTORY_FIELDS}
-
-
-def load_history():
-    """读历史；文件缺失或损坏一律当作空历史，绝不阻塞启动。"""
+def set_autorun(on):
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return []
-    if not isinstance(data, list):
-        return []
-    return [e for e in data if isinstance(e, dict)]
-
-
-def save_history(items):
-    """原子写入，避免异常退出写坏历史文件。"""
-    try:
-        os.makedirs(APPDATA_DIR, exist_ok=True)
-        tmp = HISTORY_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(items, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, HISTORY_FILE)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            if on:
+                winreg.SetValueEx(k, "ToMe", 0, winreg.REG_SZ,
+                                  '"%s"' % sys.executable)
+            else:
+                try:
+                    winreg.DeleteValue(k, "ToMe")
+                except FileNotFoundError:
+                    pass
     except OSError:
         pass
-
-
-def trim_history(items):
-    """按时间升序整理；只淘汰最旧的未置顶记录，置顶的永远保留。"""
-    items = sorted(items, key=lambda e: e.get("ts", 0))
-    pinned = [e for e in items if e.get("pinned")]
-    plain = [e for e in items if not e.get("pinned")]
-    if len(plain) > HISTORY_MAX:
-        plain = plain[-HISTORY_MAX:]
-    return sorted(pinned + plain, key=lambda e: e.get("ts", 0))
-
-
-def history_display_order(items):
-    """列表顺序：置顶的在前，各自按时间从新到旧。"""
-    def key(e):
-        return e.get("ts", 0)
-    pinned = sorted([e for e in items if e.get("pinned")],
-                    key=key, reverse=True)
-    plain = sorted([e for e in items if not e.get("pinned")],
-                   key=key, reverse=True)
-    return pinned + plain
-
-
-def push_history(cfg):
-    """落一条历史。与最近一条完全相同则不重复记，返回是否新增。"""
-    snap = history_snapshot(cfg)
-    items = load_history()
-    if items:
-        last = max(items, key=lambda e: e.get("ts", 0))
-        if all(last.get(k) == snap[k] for k in HISTORY_FIELDS):
-            return False
-    snap["ts"] = int(time.time())
-    snap["pinned"] = False
-    items.append(snap)
-    save_history(trim_history(items))
-    return True
-
-
-def history_time_str(ts):
-    try:
-        return time.strftime("%Y-%m-%d %H:%M", time.localtime(int(ts)))
-    except (ValueError, OSError, TypeError):
-        return "?"
-
-
-def hist_style_line(e):
-    """一行样式摘要：字号 / 字体 / 对齐 / 不透明度 / 粗斜 / 投影 / 边框。"""
-    aligns = tr("aligns")
-    a = int(e.get("align", 1) or 0)
-    a = aligns[a] if 0 <= a < len(aligns) else aligns[1]
-    try:
-        pt = int(round(float(e.get("font_pt", 0) or 0)))
-    except (TypeError, ValueError):
-        pt = 0
-    parts = ["%s %dpt" % (e.get("font_family") or "-", pt), a,
-             "%d%%" % int(e.get("text_alpha", 100) or 0)]
-    if e.get("bold"):
-        parts.append(tr("fp_bold"))
-    if e.get("italic"):
-        parts.append(tr("fp_italic"))
-    if e.get("shadow_on"):
-        parts.append(tr("shadow"))
-    ba = int(e.get("border_alpha", 0) or 0)
-    if ba > 0:
-        parts.append("%s %d%%" % (tr("border_alpha"), ba))
-    return " · ".join(parts)
-
-
-def history_export_text(items):
-    """导出成人类可读的 txt。"""
-    out = ["念 ToMe — 编辑历史",
-           "导出时间：%s" % time.strftime("%Y-%m-%d %H:%M:%S"),
-           "共 %d 条" % len(items), ""]
-    for i, e in enumerate(history_display_order(items), 1):
-        out.append("=" * 56)
-        out.append("[%d] %s%s" % (i, history_time_str(e.get("ts", 0)),
-                                  "  [置顶]" if e.get("pinned") else ""))
-        out.append(hist_style_line(e))
-        out.append("-" * 56)
-        out.append(e.get("text") or "")
-        out.append("")
-    return "\n".join(out)
 
 
 def system_is_dark():
@@ -526,7 +283,7 @@ def system_is_dark():
 
 
 def current_dark():
-    t = (S["cfg"] or {}).get("theme", "auto")
+    t = S["cfg"].get("theme", "auto")
     if t == "dark":
         return True
     if t == "light":
@@ -630,13 +387,11 @@ def make_qss(dark, for_picker=False, mica=False):
         border-left: 3px solid @ACCINT; }
 
     /* ---- 输入控件（TextBox / ComboBox）---- */
-    QTextEdit, QComboBox, QLineEdit { background: @INPUTBG; color: @TXT;
+    QTextEdit, QComboBox { background: @INPUTBG; color: @TXT;
         border: 1px solid @INPUTSTROKE; border-bottom: 2px solid @INPUTSTROKE2;
         border-radius: 4px; padding: 7px 9px; font-size: 13px;
-        selection-background-color: @SELBG; selection-color: @TXT; }
-    QTextEdit:focus, QComboBox:focus, QLineEdit:focus {
-        border-bottom: 2px solid @ACCINT; }
-    QLineEdit:disabled { color: @TXT3; }
+        selection-background-color: @SELBG; }
+    QTextEdit:focus, QComboBox:focus { border-bottom: 2px solid @ACCINT; }
     QComboBox QAbstractItemView { background: @CARDBG; color: @TXT;
         border: 1px solid @CARDSTROKE; border-radius: 8px; padding: 4px;
         outline: none; }
@@ -685,17 +440,6 @@ def make_qss(dark, for_picker=False, mica=False):
         border-radius: 4px; color: @TXT; font-size: 14px; padding: 10px; }
     QLabel#swatch { border: 1px solid @INPUTSTROKE; }
 
-    /* ---- 编辑历史 ---- */
-    QListWidget#hist { background: @INPUTBG; color: @TXT;
-        border: 1px solid @INPUTSTROKE; border-radius: 4px; padding: 4px;
-        font-size: 12px; outline: none; }
-    QListWidget#hist::item { padding: 5px 8px; border-radius: 4px;
-        color: @TXT2; min-height: 22px; }
-    QListWidget#hist::item:hover { background: @SUBTLE; }
-    QListWidget#hist::item:selected { background: @SELBG; color: @TXT; }
-    QLabel#histprev { background: @INPUTBG; border: 1px solid @INPUTSTROKE;
-        border-radius: 4px; color: @TXT; font-size: 12px; padding: 8px; }
-
     /* ---- ScrollBar ---- */
     QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
     QScrollBar::handle:vertical { background: @SCROLL; border-radius: 4px;
@@ -722,8 +466,6 @@ class MottoWindow(QWidget):
         self.size0 = None
         self.dlg = None
         self.tray = None
-        self.user_hidden = False   # 用户通过托盘手动隐藏
-        self.auto_hidden = False   # 全屏免打扰自动隐藏
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -737,44 +479,9 @@ class MottoWindow(QWidget):
         self._hb.timeout.connect(self.check_attach)
 
     def check_attach(self):
-        if self.editing or not self.isVisible() or self.user_hidden \
-                or self.auto_hidden:
+        if self.editing or not self.isVisible():
             return
         # 周期性重申：沉底 + 穿透（防止其他程序扰动 z 序或样式漂移）
-        attach_wallpaper(int(self.winId()))
-        hwnd = int(self.winId())
-        ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-        if not (ex & WS_EX_TRANSPARENT):
-            ex |= WS_EX_TRANSPARENT
-            user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
-        self.ensure_on_screen()
-
-    # ---- 显隐（手动隐藏 / 全屏自动隐藏）----
-    def toggle_visibility(self):
-        if self.user_hidden or self.auto_hidden:
-            self.show_text()
-        else:
-            self.hide_text(user=True)
-
-    def hide_text(self, user=False, auto=False):
-        if self.editing:
-            return
-        if user:
-            self.user_hidden = True
-        if auto:
-            self.auto_hidden = True
-        self.hide()
-
-    def show_text(self, auto=False):
-        if auto:
-            self.auto_hidden = False
-        else:
-            self.user_hidden = False
-            self.auto_hidden = False
-        if self.user_hidden or self.auto_hidden:
-            return
-        self.show()
-        self.repaint()
         attach_wallpaper(int(self.winId()))
         hwnd = int(self.winId())
         ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
@@ -816,22 +523,18 @@ class MottoWindow(QWidget):
         dbg("edit_mode=%s" % on)
 
     def ensure_on_screen(self):
-        """多屏纠偏：窗口与任一屏幕可用区域相交不足 60px 则拉回主屏。"""
-        g = self.frameGeometry()
-        for s in QGuiApplication.screens():
-            ag = s.availableGeometry()
-            inter = g.intersected(ag)
-            if inter.width() >= 60 and inter.height() >= 60:
-                return  # 已在某个屏幕内
-        ag = QApplication.primaryScreen().availableGeometry()
-        self.move(ag.x() + 80, ag.y() + 80)
-        if self.width() > ag.width():
-            self.resize(ag.width(), self.height())
-        if self.height() > ag.height():
-            self.resize(self.width(), ag.height())
+        scr = QApplication.primaryScreen().availableGeometry()
+        p = self.pos()
+        if p.x() < -self.width() + 60 or p.y() < -20 or \
+           p.x() > scr.width() - 60 or p.y() > scr.height() - 60:
+            self.move(80, 80)
+        if self.width() > scr.width():
+            self.resize(scr.width(), self.height())
+        if self.height() > scr.height():
+            self.resize(self.width(), scr.height())
 
     def auto_fit(self):
-        """字号/行距/字体变化后，窗口贴合文字尺寸（可扩可缩，不裁字）。"""
+        """字号/行距/字体变大后，窗口自动撑大到刚好装下所有文字（不裁字）"""
         if not self.editing:
             return
         cfg = self.cfg
@@ -849,18 +552,13 @@ class MottoWindow(QWidget):
         for line in lines:
             need_w = max(need_w, fm.horizontalAdvance(line))
         need_w = int(need_w) + PAD * 2
-        # 以窗口当前所在屏幕为上限（多屏分辨率/缩放不同）
-        screen = QApplication.screenAt(self.frameGeometry().center()) \
-            or QApplication.primaryScreen()
-        ag = screen.availableGeometry()
-        need_w = max(120, min(need_w, ag.width()))
-        need_h = max(60, min(need_h, ag.height()))
-        # 拖拽缩放中不回缩（避免与手动操作打架）
-        if not self.resizing:
-            self.resize(need_w, need_h)
-        # 高度变化后若底部出屏，整体上移
-        if self.y() + self.height() > ag.bottom():
-            self.move(self.x(), ag.bottom() - self.height())
+        scr = QApplication.primaryScreen().availableGeometry()
+        need_w = max(self.width(), min(need_w, scr.width()))
+        need_h = max(self.height(), min(need_h, scr.height()))
+        self.resize(need_w, need_h)
+        # 高度撑大后若底部出屏，整体上移
+        if self.y() + self.height() > scr.bottom():
+            self.move(self.x(), max(0, scr.bottom() - self.height()))
 
     def start_edit(self):
         if self.editing:
@@ -868,10 +566,6 @@ class MottoWindow(QWidget):
                 self.dlg.raise_()
                 self.dlg.activateWindow()
             return
-        # 被（手动/全屏）隐藏时，进入编辑先恢复显示
-        if self.user_hidden or self.auto_hidden:
-            self.user_hidden = self.auto_hidden = False
-            self.show()
         self.ensure_on_screen()
         self.set_edit_mode(True)
         self.dlg = SettingsDialog(self)
@@ -900,27 +594,16 @@ class MottoWindow(QWidget):
         lines = (cfg.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
         gap = int(cfg.get("line_gap", 0))
         align = ALIGN_FLAGS.get(int(cfg.get("align", 1)), Qt.AlignHCenter)
-        ta = max(0, min(100, int(cfg.get("text_alpha", 100)))) * 255 // 100
-        base = QColor((cfg["text_color"] >> 16) & 0xFF,
-                      (cfg["text_color"] >> 8) & 0xFF,
-                      cfg["text_color"] & 0xFF, ta)
-        flags = align | Qt.AlignVCenter | Qt.TextSingleLine
+        p.setPen(QColor((cfg["text_color"] >> 16) & 0xFF,
+                        (cfg["text_color"] >> 8) & 0xFF,
+                        cfg["text_color"] & 0xFF))
         y = PAD
         for i, line in enumerate(lines):
             if i >= MAX_LINES:
                 break
-            rect = QRectF(PAD, y, W - 2 * PAD, fm.height())
             if line:
-                # 1) 柔影：8 方向半透明黑字，保证花哨壁纸上可读
-                if cfg.get("shadow_on", True) and ta > 0:
-                    p.setPen(QColor(0, 0, 0, int(ta * 0.5)))
-                    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2),
-                                   (-1.4, -1.4), (1.4, -1.4),
-                                   (-1.4, 1.4), (1.4, 1.4)):
-                        p.drawText(rect.translated(dx, dy), flags, line)
-                # 2) 正文
-                p.setPen(base)
-                p.drawText(rect, flags, line)
+                rect = QRectF(PAD, y, W - 2 * PAD, fm.height())
+                p.drawText(rect, align | Qt.AlignVCenter | Qt.TextSingleLine, line)
             y += fm.height() + gap
 
         if self.editing:
@@ -989,10 +672,6 @@ class ToggleSwitch(QCheckBox):
         self.setCursor(Qt.PointingHandCursor)
         self._hover = False
         self.setText("")
-
-    def hitButton(self, pos):
-        """整个 40x20 轨道都可点（默认只命中左上角 ~16px 复选框指示区）"""
-        return self.rect().contains(pos)
 
     def enterEvent(self, e):
         self._hover = True
@@ -1139,11 +818,10 @@ PRESET_COLORS = ["#e81123", "#f7630c", "#ffb900", "#107c10", "#00b294",
 
 
 class ColorPickerDialog(QDialog):
-    """现代取色器：SV 面板 + 色相条 + HEX 手输 + 最近色 + 预设色板"""
-    def __init__(self, initial, recent, parent, title):
+    """现代取色器：SV 面板 + 色相条 + 预设色板"""
+    def __init__(self, initial, parent, title):
         super().__init__(parent)
         self._mica = False
-        self._recent = list(recent or [])[:8]
         self.setWindowTitle(title)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint |
                             Qt.WindowStaysOnTopHint)
@@ -1181,20 +859,11 @@ class ColorPickerDialog(QDialog):
         self.swatch.setObjectName("swatch")
         self.swatch.setAlignment(Qt.AlignCenter)
         rowp.addWidget(self.swatch)
-        self.edt_hex = QLineEdit()
-        self.edt_hex.setFixedWidth(108)
-        self.edt_hex.setMaxLength(7)
-        self.edt_hex.editingFinished.connect(self.on_hex_edited)
-        rowp.addWidget(self.edt_hex)
+        self.hexlbl = QLabel()
+        self.hexlbl.setObjectName("value")
+        rowp.addWidget(self.hexlbl)
         rowp.addStretch(1)
         v0.addLayout(rowp)
-
-        # 最近使用的自定义色（可空）
-        self.recent_grid = QGridLayout()
-        self.recent_grid.setSpacing(6)
-        self.recent_grid.setColumnStretch(8, 1)   # 不足 8 个时左对齐
-        v0.addLayout(self.recent_grid)
-        self.build_recent()
 
         grid = QGridLayout()
         grid.setSpacing(6)
@@ -1255,38 +924,6 @@ class ColorPickerDialog(QDialog):
         self._drag = None
         super().mouseReleaseEvent(ev)
 
-    def build_recent(self):
-        while self.recent_grid.count():
-            it = self.recent_grid.takeAt(0)
-            w = it.widget()
-            if w:
-                w.deleteLater()
-        if not self._recent:
-            return
-        edge = ("rgba(255,255,255,0.22)" if current_dark()
-                else "rgba(0,0,0,0.18)")
-        hov = "#4cc2ff" if current_dark() else "#0067c0"
-        for i, hexc in enumerate(self._recent[:8]):
-            b = QPushButton()
-            b.setFixedSize(30, 30)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(
-                "QPushButton { background: %s; border: 1px solid %s;"
-                " border-radius: 4px; min-width: 30px; max-width: 30px; }"
-                "QPushButton:hover { border: 2px solid %s; }"
-                % (hexc, edge, hov))
-            b.clicked.connect(lambda _=False, hx=hexc: self.set_hex(hx))
-            self.recent_grid.addWidget(b, i // 8, i % 8)
-
-    def on_hex_edited(self):
-        t = self.edt_hex.text().strip().lstrip("#")
-        if len(t) == 6:
-            c = QColor("#" + t)
-            if c.isValid():
-                self.set_hex("#" + t.upper())
-                return
-        self.sync_ui()   # 非法输入：还原为当前色
-
     def set_hex(self, hexc):
         c = QColor(hexc)
         h, s, v, _ = c.getHsvF()
@@ -1311,7 +948,7 @@ class ColorPickerDialog(QDialog):
         self._color = QColor.fromHsvF(self._h, self._s, self._v)
         self.swatch.setStyleSheet(
             "QLabel { background: %s; border-radius: 4px; }" % self._color.name())
-        self.edt_hex.setText(self._color.name().upper())
+        self.hexlbl.setText(self._color.name().upper())
 
     def picked_color(self):
         return self._color
@@ -1354,22 +991,23 @@ class FontPickerDialog(QDialog):
         body.setSpacing(16)
 
         col1 = QVBoxLayout()
-        col1.setSpacing(8)
         self.lbl_family = QLabel(tr("fp_family"))
-        self.edt_search = QLineEdit()
-        self.edt_search.setPlaceholderText(tr("fp_search"))
-        self.edt_search.setClearButtonEnabled(True)
-        self.edt_search.textChanged.connect(self.populate_fonts)
         self.lst = QListWidget()
         self.lst.setObjectName("fp_list")
         self.lst.setFixedWidth(216)
         self.lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._fams = sorted(QFontDatabase().families(), key=str.lower)
-        self._cur_family = family
-        self.populate_fonts("")
+        fams = sorted(QFontDatabase().families(), key=str.lower)
+        cur = -1
+        for i, f in enumerate(fams):
+            it = QListWidgetItem(f)
+            it.setFont(QFont(f, 10))   # 每个字体名用它自己渲染
+            self.lst.addItem(it)
+            if f == family:
+                cur = i
+        if cur >= 0:
+            self.lst.setCurrentRow(cur)
         self.lst.currentRowChanged.connect(self.on_family)
         col1.addWidget(self.lbl_family)
-        col1.addWidget(self.edt_search)
         col1.addWidget(self.lst, 1)
         body.addLayout(col1)
 
@@ -1440,28 +1078,10 @@ class FontPickerDialog(QDialog):
         self.apply_theme()
 
     # ---- 交互 ----
-    def populate_fonts(self, text):
-        kw = text.strip().lower()
-        self.lst.blockSignals(True)
-        self.lst.clear()
-        cur = -1
-        for f in self._fams:
-            if kw and kw not in f.lower():
-                continue
-            it = QListWidgetItem(f)
-            it.setFont(QFont(f, 10))   # 每个字体名用它自己渲染
-            self.lst.addItem(it)
-            if f == self._cur_family:
-                cur = self.lst.count() - 1
-        if cur >= 0:
-            self.lst.setCurrentRow(cur)
-        self.lst.blockSignals(False)
-
     def on_family(self, row):
         it = self.lst.item(row)
         if it:
             self._family = it.text()
-            self._cur_family = self._family
             self.sync_preview()
 
     def on_size(self, v):
@@ -1540,7 +1160,7 @@ class SettingsDialog(QDialog):
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
         self.nav.setFixedWidth(112)
-        for _i in range(4):
+        for _i in range(3):
             self.nav.addItem(QListWidgetItem(""))
         self.nav.currentRowChanged.connect(self.on_nav)
         self.stack = QStackedWidget()
@@ -1593,34 +1213,12 @@ class SettingsDialog(QDialog):
         self.b_tc = QPushButton()
         self.b_bc = QPushButton()
         self.b_font.clicked.connect(self.pick_font)
-        self.b_tc.clicked.connect(lambda: self.pick_color_for("text_color", "tc_dlg"))
-        self.b_bc.clicked.connect(lambda: self.pick_color_for("border_color", "bc_dlg"))
+        self.b_tc.clicked.connect(lambda: self.pick_color(True))
+        self.b_bc.clicked.connect(lambda: self.pick_color(False))
         row_btns.addWidget(self.b_font)
         row_btns.addWidget(self.b_tc)
         row_btns.addWidget(self.b_bc)
         v2.addLayout(row_btns)
-
-        row_alpha = QHBoxLayout()
-        self.lbl_alpha = QLabel()
-        self.sl_alpha = QSlider(Qt.Horizontal)
-        self.sl_alpha.setRange(10, 100)
-        self.lbl_aval = QLabel()
-        self.lbl_aval.setObjectName("value")
-        self.lbl_aval.setAlignment(Qt.AlignCenter)
-        row_alpha.addWidget(self.lbl_alpha)
-        row_alpha.addWidget(self.sl_alpha, 1)
-        row_alpha.addWidget(self.lbl_aval)
-        self.sl_alpha.valueChanged.connect(self.on_changed)
-        v2.addLayout(row_alpha)
-
-        row_sh = QHBoxLayout()
-        self.lbl_shadow = QLabel()
-        self.tgl_shadow = ToggleSwitch()
-        self.tgl_shadow.toggled.connect(self.on_changed)
-        row_sh.addWidget(self.lbl_shadow)
-        row_sh.addStretch(1)
-        row_sh.addWidget(self.tgl_shadow)
-        v2.addLayout(row_sh)
 
         row1 = QHBoxLayout()
         self.lbl_border = QLabel()
@@ -1688,91 +1286,12 @@ class SettingsDialog(QDialog):
         self.lbl_run = QLabel()
         self.tgl_run = ToggleSwitch()
         self.tgl_run.setChecked(is_autorun())
-        self.tgl_run.toggled.connect(self.on_autorun_toggled)
+        self.tgl_run.toggled.connect(set_autorun)
         row5.addWidget(self.lbl_run)
         row5.addStretch(1)
         row5.addWidget(self.tgl_run)
         v3.addLayout(row5)
-
-        row6 = QHBoxLayout()
-        self.lbl_fs = QLabel()
-        self.tgl_fs = ToggleSwitch()
-        self.tgl_fs.toggled.connect(self.on_fs_toggled)
-        row6.addWidget(self.lbl_fs)
-        row6.addStretch(1)
-        row6.addWidget(self.tgl_fs)
-        v3.addLayout(row6)
-
-        v3.addSpacing(4)
-        row7 = QHBoxLayout()
-        self.btn_reset = QPushButton()
-        self.btn_reset.setCursor(Qt.PointingHandCursor)
-        self.btn_reset.clicked.connect(self.reset_position)
-        row7.addWidget(self.btn_reset)
-        row7.addStretch(1)
-        v3.addLayout(row7)
         self.stack.addWidget(self._wrap(card3))
-
-        # ---------- 页4：编辑历史 ----------
-        card4 = QFrame()
-        card4.setObjectName("card")
-        v4 = QVBoxLayout(card4)
-        v4.setContentsMargins(18, 16, 18, 16)
-        v4.setSpacing(8)
-        self.lbl_sec4 = QLabel()
-        self.lbl_sec4.setObjectName("sec")
-        v4.addWidget(self.lbl_sec4)
-
-        self.lbl_hist_tip = QLabel()
-        self.lbl_hist_tip.setWordWrap(True)
-        v4.addWidget(self.lbl_hist_tip)
-
-        self.hist = load_history()          # 内存里的历史副本
-        self.hist_view = []                 # 当前列表的展示顺序
-
-        self.lst_hist = QListWidget()
-        self.lst_hist.setObjectName("hist")
-        self.lst_hist.setFixedHeight(146)
-        self.lst_hist.currentRowChanged.connect(self.on_hist_select)
-        v4.addWidget(self.lst_hist)
-
-        self.lbl_hist_prev = QLabel()
-        self.lbl_hist_prev.setObjectName("histprev")
-        self.lbl_hist_prev.setFixedHeight(64)
-        self.lbl_hist_prev.setWordWrap(True)
-        self.lbl_hist_prev.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        v4.addWidget(self.lbl_hist_prev)
-
-        hb1 = QHBoxLayout()
-        hb1.setSpacing(6)
-        self.b_hist_restore = QPushButton()
-        self.b_hist_pin = QPushButton()
-        self.b_hist_del = QPushButton()
-        self.b_hist_copy = QPushButton()
-        for _b in (self.b_hist_restore, self.b_hist_pin,
-                   self.b_hist_del, self.b_hist_copy):
-            _b.setCursor(Qt.PointingHandCursor)
-            hb1.addWidget(_b)
-        hb1.addStretch(1)
-        self.b_hist_restore.clicked.connect(self.hist_restore)
-        self.b_hist_pin.clicked.connect(self.hist_toggle_pin)
-        self.b_hist_del.clicked.connect(self.hist_delete)
-        self.b_hist_copy.clicked.connect(self.hist_copy)
-        v4.addLayout(hb1)
-
-        hb2 = QHBoxLayout()
-        hb2.setSpacing(6)
-        self.b_hist_export = QPushButton()
-        self.b_hist_clear = QPushButton()
-        for _b in (self.b_hist_export, self.b_hist_clear):
-            _b.setCursor(Qt.PointingHandCursor)
-            hb2.addWidget(_b)
-        hb2.addStretch(1)
-        self.b_hist_export.clicked.connect(self.hist_export)
-        self.b_hist_clear.clicked.connect(self.hist_clear)
-        v4.addLayout(hb2)
-
-        self.stack.addWidget(self._wrap(card4))
 
         root.addLayout(body, 1)
 
@@ -1791,11 +1310,6 @@ class SettingsDialog(QDialog):
         self.retranslate()
         self.apply_values()
         self.nav.setCurrentRow(0)
-
-        # 固定整体高度：按最高一页计算，避免切页时窗口跳动
-        page_h = max(self.stack.widget(i).sizeHint().height()
-                     for i in range(self.stack.count()))
-        self.setFixedHeight(6 + 32 + 6 + page_h + 12 + 36 + 20)
 
     def _wrap(self, card):
         """把卡片包进透明分页，供 QStackedWidget 使用"""
@@ -1843,20 +1357,11 @@ class SettingsDialog(QDialog):
         self.sl_font.setValue(max(8, min(200, int(round(self.cfg["font_pt"])))))
         self.sl_border.setValue(int(self.cfg["border_alpha"]))
         self.sl_gap.setValue(int(self.cfg["line_gap"]))
-        self.sl_alpha.setValue(max(10, min(100, int(self.cfg.get("text_alpha", 100)))))
-        self.tgl_shadow.setChecked(bool(self.cfg.get("shadow_on", True)))
-        self.tgl_fs.setChecked(bool(self.cfg.get("fs_hide", True)))
         self.cb_align.setCurrentIndex(max(0, min(2, int(self.cfg["align"]))))
         self.lbl_fval.setText(str(self.sl_font.value()))
         self.lbl_bval.setText("%d%%" % self.sl_border.value())
         self.lbl_gval.setText(str(self.sl_gap.value()))
-        self.lbl_aval.setText("%d%%" % self.sl_alpha.value())
         self.guard = False
-        self.sync_enabled()
-
-    def sync_enabled(self):
-        """边框透明度 0 → 禁用边框色按钮"""
-        self.b_bc.setEnabled(self.sl_border.value() > 0)
 
     def retranslate(self):
         self.setWindowTitle(tr("title"))
@@ -1868,26 +1373,12 @@ class SettingsDialog(QDialog):
         self.b_tc.setText(tr("text_color"))
         self.b_bc.setText(tr("border_color"))
         self.lbl_border.setText(tr("border_alpha"))
-        self.lbl_alpha.setText(tr("text_alpha"))
-        self.lbl_shadow.setText(tr("shadow"))
         self.lbl_gap.setText(tr("line_gap"))
         self.lbl_align.setText(tr("align"))
         self.lbl_lang.setText(tr("lang_label"))
         self.lbl_theme.setText(tr("theme_label"))
         self.lbl_run.setText(tr("autorun"))
-        self.lbl_fs.setText(tr("fs_hide"))
-        self.btn_reset.setText(tr("reset_pos"))
-        # ---- 编辑历史页 ----
-        self.lbl_sec4.setText(tr("sec_history"))
-        self.lbl_hist_tip.setText(tr("hist_tip"))
-        self.b_hist_restore.setText(tr("hist_restore"))
-        self.b_hist_del.setText(tr("hist_delete"))
-        self.b_hist_copy.setText(tr("hist_copy"))
-        self.b_hist_export.setText(tr("hist_export"))
-        self.b_hist_clear.setText(tr("hist_clear"))
-        self.rebuild_hist()
-        for _i, _k in enumerate(("sec_text", "sec_style", "sec_misc",
-                                 "sec_history")):
+        for _i, _k in enumerate(("sec_text", "sec_style", "sec_misc")):
             self.nav.item(_i).setText(tr(_k))
         self.btn_done.setText(tr("done"))
         self.cb_align.blockSignals(True)
@@ -1936,35 +1427,6 @@ class SettingsDialog(QDialog):
             pass
         return False, 0
 
-    def on_autorun_toggled(self, on):
-        """开机自启：注册表写失败时把开关拨回原位并提示，不让界面说谎。"""
-        if self.guard:
-            return
-        if set_autorun(on):
-            return
-        self.guard = True
-        self.tgl_run.setChecked(not on)
-        self.guard = False
-        if self.win.tray:
-            self.win.tray.showMessage(tr("autorun_fail_t"),
-                                      tr("autorun_fail_b"),
-                                      QSystemTrayIcon.Warning, 5000)
-
-    def on_fs_toggled(self, on):
-        if self.guard:
-            return
-        self.cfg["fs_hide"] = bool(on)
-        save_cfg(self.cfg)
-        if not on and self.win.auto_hidden:
-            self.win.show_text(auto=True)
-
-    def reset_position(self):
-        self.win.setGeometry(80, 80, 700, 240)
-        self.cfg.update({"x": 80, "y": 80, "w": 700, "h": 240})
-        self.win.repaint()
-        save_cfg(self.cfg)
-        dbg("position reset")
-
     # ---- 数据 ----
     def on_text_changed(self):
         if self.guard:
@@ -1990,20 +1452,15 @@ class SettingsDialog(QDialog):
         cfg["font_pt"] = float(self.sl_font.value())
         cfg["border_alpha"] = self.sl_border.value()
         cfg["line_gap"] = self.sl_gap.value()
-        cfg["text_alpha"] = self.sl_alpha.value()
-        cfg["shadow_on"] = self.tgl_shadow.isChecked()
         cfg["align"] = self.cb_align.currentIndex()
-        self.lbl_fval.setText(str(int(round(cfg["font_pt"]))))
+        self.lbl_fval.setText(str(cfg["font_pt"]))
         self.lbl_bval.setText("%d%%" % cfg["border_alpha"])
         self.lbl_gval.setText(str(cfg["line_gap"]))
-        self.lbl_aval.setText("%d%%" % cfg["text_alpha"])
-        self.sync_enabled()
-        self.win.auto_fit()  # 字号变化时窗口自动贴合，不裁字
+        self.win.auto_fit()  # 字号变大时窗口自动撑大，不裁字
         self.win.repaint()   # 同步强制重绘
         save_cfg(cfg)        # 实时保存
-        dbg("change pt=%s alpha=%s shadow=%s align=%s" %
-            (cfg["font_pt"], cfg["text_alpha"], cfg["shadow_on"],
-             cfg["align"]))
+        dbg("change pt=%s color=%06X align=%s" %
+            (cfg["font_pt"], cfg["text_color"], cfg["align"]))
 
     def pick_font(self):
         cfg = self.cfg
@@ -2024,177 +1481,20 @@ class SettingsDialog(QDialog):
             save_cfg(cfg)
             dbg("font -> %s %spt" % (cfg["font_family"], cfg["font_pt"]))
 
-    def pick_color_for(self, key, title_key):
+    def pick_color(self, is_text):
         cfg = self.cfg
-        recent = list(cfg.get("recent_colors", []))
-        dlg = ColorPickerDialog("#%06X" % cfg[key], recent, self, tr(title_key))
+        key = "text_color" if is_text else "border_color"
+        dlg = ColorPickerDialog("#%06X" % cfg[key], self,
+                                tr("tc_dlg") if is_text else tr("bc_dlg"))
         if dlg.exec() == QDialog.Accepted:
             c = dlg.picked_color()
-            hexc = c.name().upper()
             cfg[key] = (c.red() << 16) | (c.green() << 8) | c.blue()
-            # 最近色：去重置顶，最多 8 个（预设色不入列）
-            recent = [x for x in recent if x.upper() != hexc]
-            recent.insert(0, hexc)
-            cfg["recent_colors"] = recent[:8]
-            self.sync_enabled()
             self.win.repaint()
             save_cfg(cfg)
             dbg("color %s -> %06X" % (key, cfg[key]))
 
-    # ---- 编辑历史 ----
-    def hist_item(self, row=None):
-        """取列表里选中的那条历史（dict 或 None）。"""
-        if row is None:
-            row = self.lst_hist.currentRow()
-        if row is None or row < 0 or row >= len(self.hist_view):
-            return None
-        return self.hist_view[row]
-
-    def rebuild_hist(self, keep_ts=None):
-        """重建列表：置顶在前，各自按时间从新到旧。"""
-        self.hist_view = history_display_order(self.hist)
-        self.lst_hist.blockSignals(True)
-        self.lst_hist.clear()
-        for e in self.hist_view:
-            when = history_time_str(e.get("ts", 0))
-            first = (e.get("text") or "").strip().split("\n")[0][:22]
-            if not first:
-                first = "(空)"
-            mark = "📌 " if e.get("pinned") else ""
-            it = QListWidgetItem("%s%s  %s" % (mark, when, first))
-            f = it.font()
-            f.setBold(bool(e.get("pinned")))
-            it.setFont(f)
-            it.setToolTip(hist_style_line(e))
-            self.lst_hist.addItem(it)
-        self.lst_hist.blockSignals(False)
-
-        want = 0 if self.hist_view else -1
-        if keep_ts is not None:
-            for i, e in enumerate(self.hist_view):
-                if e.get("ts") == keep_ts:
-                    want = i
-                    break
-        self.lst_hist.setCurrentRow(want)
-        self.on_hist_select(self.lst_hist.currentRow())
-
-    def on_hist_select(self, row):
-        e = self.hist_item(row)
-        has = e is not None
-        for b in (self.b_hist_restore, self.b_hist_pin,
-                  self.b_hist_del, self.b_hist_copy):
-            b.setEnabled(has)
-        if not has:
-            self.b_hist_pin.setText(tr("hist_pin"))
-            self.lbl_hist_prev.setText(
-                tr("hist_empty") if not self.hist_view else tr("hist_pick_first"))
-            return
-        self.b_hist_pin.setText(tr("hist_unpin") if e.get("pinned")
-                                else tr("hist_pin"))
-        txt = truncate_lines(e.get("text") or "") or "(空)"
-        self.lbl_hist_prev.setText("%s\n%s" % (txt, hist_style_line(e)))
-
-    def hist_write(self):
-        """内存 → 磁盘（顺带做上限淘汰）。"""
-        self.hist = trim_history(self.hist)
-        save_history(self.hist)
-
-    def hist_restore(self):
-        e = self.hist_item()
-        if e is None:
-            return
-        cfg = self.cfg
-        push_history(cfg)              # 先把恢复前的状态存一条，来回切换不丢内容
-        self.guard = True
-        for k in HISTORY_FIELDS:
-            if k in e:
-                cfg[k] = e[k]
-        cfg["text"] = e.get("text", cfg.get("text", ""))
-        self.txt.setPlainText(truncate_lines(cfg["text"]))
-        self.prev_text = self.txt.toPlainText()
-        self.guard = False
-        self.apply_values()            # 滑杆/开关/对齐同步到恢复后的值
-        self.on_changed()              # 落盘 + 桌面重绘
-        self.hist = load_history()
-        self.rebuild_hist(keep_ts=e.get("ts"))
-        if self.win.tray:
-            self.win.tray.showMessage(tr("hist_restored_t"),
-                                      tr("hist_restored_b"),
-                                      QSystemTrayIcon.Information, 4000)
-
-    def hist_toggle_pin(self):
-        e = self.hist_item()
-        if e is None:
-            return
-        e["pinned"] = not e.get("pinned")
-        self.hist_write()
-        self.rebuild_hist(keep_ts=e.get("ts"))
-
-    def hist_delete(self):
-        e = self.hist_item()
-        if e is None:
-            return
-        ts = e.get("ts")
-        self.hist = [x for x in self.hist if x.get("ts") != ts]
-        self.hist_write()
-        self.rebuild_hist()
-
-    def hist_copy(self):
-        e = self.hist_item()
-        if e is None:
-            return
-        QApplication.clipboard().setText(e.get("text") or "")
-        if self.win.tray:
-            self.win.tray.showMessage(tr("hist_copied_t"), tr("hist_copied_b"),
-                                      QSystemTrayIcon.Information, 3000)
-
-    def hist_clear(self):
-        if QMessageBox.question(self, tr("hist_clear_t"),
-                                tr("hist_clear_q")) != QMessageBox.Yes:
-            return
-        self.hist = [x for x in self.hist if x.get("pinned")]
-        self.hist_write()
-        self.rebuild_hist()
-        if self.win.tray:
-            self.win.tray.showMessage(tr("hist_clear_t"), tr("hist_clear_ok"),
-                                      QSystemTrayIcon.Information, 3000)
-
-    def hist_export(self):
-        if not self.hist:
-            QMessageBox.information(self, tr("hist_export_t"),
-                                    tr("hist_pick_first"))
-            return
-        default = "%s-%s" % (tr("hist_export_name"), time.strftime("%Y%m%d"))
-        path, _sel = QFileDialog.getSaveFileName(
-            self, tr("hist_export"),
-            os.path.join(os.path.expanduser("~"), "Desktop", default),
-            tr("hist_export_filter"))
-        if not path:
-            return
-        try:
-            if path.lower().endswith(".json"):
-                payload = {
-                    "app": "ToMe",
-                    "format": 1,
-                    "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "count": len(self.hist),
-                    "entries": history_display_order(self.hist),
-                }
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
-            else:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(history_export_text(self.hist))
-        except OSError as ex:
-            QMessageBox.warning(self, tr("hist_export_t"),
-                                tr("hist_export_fail") % ex)
-            return
-        QMessageBox.information(self, tr("hist_export_t"),
-                                tr("hist_export_b") % path)
-
     def closeEvent(self, ev):
         self.on_changed()
-        push_history(self.cfg)         # 关闭设置窗口 = 一次编辑，落一条历史
         self.win.finish_edit()
         ev.accept()
 
@@ -2229,11 +1529,6 @@ class Tray(QSystemTrayIcon):
         self.menu.addAction(self.a_exit)
         self.setContextMenu(self.menu)
         self.activated.connect(self.on_activated)
-        # 左键单击=切换显隐；用短延时判定，给双击（进编辑）让路
-        self._left_t = QTimer(self)
-        self._left_t.setSingleShot(True)
-        self._left_t.setInterval(280)
-        self._left_t.timeout.connect(win.toggle_visibility)
         self.retranslate()
 
     def retranslate(self):
@@ -2242,14 +1537,8 @@ class Tray(QSystemTrayIcon):
         self.a_exit.setText(tr("menu_exit"))
 
     def on_activated(self, reason):
-        if reason == self.DoubleClick:
-            self._left_t.stop()       # 取消左键的单击动作
+        if reason in (self.Trigger, self.DoubleClick, self.MiddleClick):
             self.win.start_edit()
-        elif reason == self.Trigger:
-            # 延时区分单击与双击：双击会在延时内到来
-            self._left_t.start()
-        elif reason == self.MiddleClick:
-            self.win.toggle_visibility()
 
     def exit_app(self):
         save_cfg(self.win.cfg)
@@ -2269,16 +1558,9 @@ def main():
     err = ctypes.get_last_error()
     dbg("mutex err=%s" % err)
     if err == 183:
-        # 第二实例：通知已运行实例进入编辑后退出（找不到事件则静默退出兜底）
-        ev = kernel32.OpenEventW(EVENT_MODIFY_STATE, False, ACT_EVENT_NAME)
-        if ev:
-            kernel32.SetEvent(ev)
         return 0
 
-    act_event = kernel32.CreateEventW(None, False, False, ACT_EVENT_NAME)
-
     S["cfg"] = load_cfg()
-    sync_autorun()   # 已开机自启但 exe 路径变了（重装/移动）→ 自动改写
     app = QApplication(sys.argv)
     # Fluent 排版：Segoe UI Variable（Win11）+ 雅黑 UI 中文回退
     _f = QFont()
@@ -2286,7 +1568,6 @@ def main():
                     "Microsoft YaHei UI", "Microsoft YaHei"])
     _f.setPointSize(10)
     app.setFont(_f)
-    app.setWindowIcon(make_tray_icon())
     dbg("qapp ok")
     app.setQuitOnLastWindowClosed(False)
 
@@ -2295,7 +1576,6 @@ def main():
     win.show()
     app.processEvents()  # 确保 winId 已创建
     win.apply_display_mode()
-    win.ensure_on_screen()
     dbg("display mode done")
 
     tray = Tray(win)
@@ -2306,44 +1586,6 @@ def main():
         save_cfg(S["cfg"])
         tray.showMessage(tr("balloon_t"), tr("balloon_b"),
                          QSystemTrayIcon.Information, 5000)
-
-    # 第二实例唤起：1s 轮询命名 Event（避免引入 QtWinExtras）
-    def poll_activate():
-        if act_event and \
-                kernel32.WaitForSingleObject(act_event, 0) == WAIT_OBJECT_0:
-            dbg("activate event received")
-            win.start_edit()
-
-    t_act = QTimer()
-    t_act.setInterval(1000)
-    t_act.timeout.connect(poll_activate)
-    t_act.start()
-
-    # 全屏免打扰：5s 查询前台是否 D3D 全屏
-    def poll_fullscreen():
-        if win.editing or not S["cfg"].get("fs_hide", True):
-            if win.auto_hidden and not win.user_hidden:
-                win.show_text(auto=True)
-            return
-        st = ctypes.c_int(0)
-        try:
-            hr = shell32.SHQueryUserNotificationState(ctypes.byref(st))
-        except OSError:
-            return
-        if hr != 0:
-            return
-        if st.value == QUNS_RUNNING_D3D_FULL_SCREEN:
-            if win.isVisible() and not win.user_hidden:
-                dbg("fullscreen detected -> hide")
-                win.hide_text(auto=True)
-        elif win.auto_hidden and not win.user_hidden:
-            dbg("fullscreen ended -> show")
-            win.show_text(auto=True)
-
-    t_fs = QTimer()
-    t_fs.setInterval(5000)
-    t_fs.timeout.connect(poll_fullscreen)
-    t_fs.start()
 
     if selftest:
         log = os.path.join(APPDATA_DIR, "selftest.log")

@@ -27,36 +27,33 @@ def grab(widget, name, margin=60):
         g.width() + margin * 2, g.height() + margin * 2).save(name)
 
 
-def shot_settings(theme, name, page):
+def shot_settings(theme, name):
     M.S["cfg"]["theme"] = theme
     dlg = M.SettingsDialog(win)
     dlg.show()
     pump()
-    dlg.nav.setCurrentRow(page)
-    # 触发一遍新控件
-    dlg.sl_alpha.setValue(80)
-    dlg.tgl_shadow.setChecked(True)
-    pump(150)
-    dlg.sync_enabled()
+    for row in (0, 1, 2):
+        dlg.nav.setCurrentRow(row)
+        pump(80)
+    dlg.nav.setCurrentRow(1)
+    pump(200)
     grab(dlg, name)
     dlg.close()
     pump(100)
 
 
-shot_settings("light", "shot_settings.png", 1)       # 字体样式（新控件）
-shot_settings("light", "shot_misc.png", 2)           # 其他设置
-shot_settings("dark", "shot_settings_dark.png", 1)
+shot_settings("light", "shot_settings.png")
+shot_settings("dark", "shot_settings_dark.png")
 
 fp = M.FontPickerDialog("Microsoft YaHei", 32, False, False, win)
 fp.show()
 pump()
-fp.edt_search.setText("ari")   # 搜索过滤
+fp.lst.setCurrentRow(3)
 pump(200)
 grab(fp, "shot_font.png", 30)
 fp.close()
 
-cp = M.ColorPickerDialog("#4F8CFF", ["#FF0000", "#123456", "#AABBCC",
-                                     "#00FF88"], win, "test")
+cp = M.ColorPickerDialog("#4F8CFF", win, "test")
 cp.show()
 pump(400)
 grab(cp, "shot_picker.png", 30)
