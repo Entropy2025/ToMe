@@ -133,11 +133,11 @@ pyinstaller ToMe.exe.spec --noconfirm --clean
 # 产物：dist/ToMe.exe
 
 # 2. 安装包（自带安装器，不依赖 Inno Setup / NSIS）
-pyinstaller --onefile --noconsole --name ToMe-Setup-1.1.0 \
+pyinstaller --onefile --noconsole --name ToMe-Setup-1.1.1 \
   --icon assets/tome.ico --add-data "dist/ToMe.exe;." \
   --distpath dist --workpath build/setup --specpath build/setup \
   installer/setup_ui.py
-# 产物：dist/ToMe-Setup-1.1.0.exe
+# 产物：dist/ToMe-Setup-1.1.1.exe
 ```
 
 > `installer/ToMe.iss` 是等价的 Inno Setup 脚本（含中文向导与自启任务），供需要时使用。

@@ -180,7 +180,7 @@ STR = {
         "sec_style": "字体样式",
         "sec_misc": "其他设置",
         "sec_history": "历史记录",
-        "hist_restore": "恢复",
+        "hist_restore": "恢复到桌面",
         "hist_pin": "置顶",
         "hist_unpin": "取消置顶",
         "hist_delete": "删除",
@@ -188,7 +188,9 @@ STR = {
         "hist_export": "导出…",
         "hist_clear": "清空",
         "hist_empty": "还没有历史记录。\n关闭设置窗口时，文字和样式会自动存成一条。",
-        "hist_tip": "选中一条可预览；置顶的不会被 100 条上限淘汰。",
+        "hist_tip": "选中一条，点「恢复到桌面」放回桌面（双击也行）。置顶的不会被 100 条上限淘汰。",
+        "hist_applied": "✓ 已恢复到桌面，关掉这个窗口就能看到",
+        "hist_applied_more": "（恢复前的状态也存成了一条历史）",
         "hist_clear_q": "确定清空未置顶的历史记录吗？\n置顶的记录会保留。",
         "hist_clear_t": "清空历史",
         "hist_clear_ok": "已清空未置顶的历史记录。",
@@ -253,7 +255,9 @@ STR = {
         "hist_export": "Export…",
         "hist_clear": "Clear",
         "hist_empty": "No history yet.\nClosing the settings window saves the current text and style as one entry.",
-        "hist_tip": "Select an entry to preview it. Pinned entries are never dropped by the 100-entry limit.",
+        "hist_tip": "Select an entry, then click \"Restore\" to put it back on the desktop (double-click works too). Pinned entries are never dropped by the 100-entry limit.",
+        "hist_applied": "✓ Restored to the desktop — close this window to see it",
+        "hist_applied_more": "(the previous state was saved as a new entry)",
         "hist_clear_q": "Clear all unpinned history?\nPinned entries will be kept.",
         "hist_clear_t": "Clear history",
         "hist_clear_ok": "Unpinned history cleared.",
@@ -695,6 +699,11 @@ def make_qss(dark, for_picker=False, mica=False):
     QListWidget#hist::item:selected { background: @SELBG; color: @TXT; }
     QLabel#histprev { background: @INPUTBG; border: 1px solid @INPUTSTROKE;
         border-radius: 4px; color: @TXT; font-size: 12px; padding: 8px; }
+    /* 「恢复到桌面」是这一页的主操作，给个 accent 描边让它跳出来 */
+    QPushButton#hist_primary { border: 1px solid @ACCINT; color: @ACCINT;
+        font-weight: 600; }
+    QPushButton#hist_primary:hover { background: @SELBG; border-color: @ACCINT; }
+    QPushButton#hist_primary:disabled { border-color: @BTNSTROKE; color: @TXT3; }
 
     /* ---- ScrollBar ---- */
     QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
@@ -1734,6 +1743,7 @@ class SettingsDialog(QDialog):
         self.lst_hist.setObjectName("hist")
         self.lst_hist.setFixedHeight(146)
         self.lst_hist.currentRowChanged.connect(self.on_hist_select)
+        self.lst_hist.itemDoubleClicked.connect(self.on_hist_double)
         v4.addWidget(self.lst_hist)
 
         self.lbl_hist_prev = QLabel()
@@ -1746,6 +1756,7 @@ class SettingsDialog(QDialog):
         hb1 = QHBoxLayout()
         hb1.setSpacing(6)
         self.b_hist_restore = QPushButton()
+        self.b_hist_restore.setObjectName("hist_primary")
         self.b_hist_pin = QPushButton()
         self.b_hist_del = QPushButton()
         self.b_hist_copy = QPushButton()
@@ -1886,6 +1897,7 @@ class SettingsDialog(QDialog):
         self.b_hist_export.setText(tr("hist_export"))
         self.b_hist_clear.setText(tr("hist_clear"))
         self.rebuild_hist()
+        self.sync_hist_widths()
         for _i, _k in enumerate(("sec_text", "sec_style", "sec_misc",
                                  "sec_history")):
             self.nav.item(_i).setText(tr(_k))
@@ -2079,6 +2091,8 @@ class SettingsDialog(QDialog):
         self.on_hist_select(self.lst_hist.currentRow())
 
     def on_hist_select(self, row):
+        # 只要换了选中项，就把上次「已恢复」的提示收回，避免误导
+        self.lbl_hist_tip.setText(tr("hist_tip"))
         e = self.hist_item(row)
         has = e is not None
         for b in (self.b_hist_restore, self.b_hist_pin,
@@ -2093,6 +2107,25 @@ class SettingsDialog(QDialog):
                                 else tr("hist_pin"))
         txt = truncate_lines(e.get("text") or "") or "(空)"
         self.lbl_hist_prev.setText("%s\n%s" % (txt, hist_style_line(e)))
+
+    def on_hist_double(self, _item):
+        """双击一条历史 = 恢复到桌面（比去点按钮顺手）。"""
+        self.hist_restore()
+
+    def sync_hist_widths(self):
+        """六个按钮统一宽度。
+        各按钮文案长短不一（「恢复到桌面」5 字 vs「删除」2 字），
+        默认会各自贴合文字，排在一起宽窄不齐很难看。这里按最长的那条统一。"""
+        btns = (self.b_hist_restore, self.b_hist_pin, self.b_hist_del,
+                self.b_hist_copy, self.b_hist_export, self.b_hist_clear)
+        keep = self.b_hist_pin.text()
+        self.b_hist_pin.setText(tr("hist_unpin"))   # 「取消置顶」是最长的
+        for b in btns:
+            b.ensurePolished()
+        w = max(b.sizeHint().width() for b in btns)
+        for b in btns:
+            b.setFixedWidth(w)
+        self.b_hist_pin.setText(keep)
 
     def hist_write(self):
         """内存 → 磁盘（顺带做上限淘汰）。"""
@@ -2117,6 +2150,8 @@ class SettingsDialog(QDialog):
         self.on_changed()              # 落盘 + 桌面重绘
         self.hist = load_history()
         self.rebuild_hist(keep_ts=e.get("ts"))
+        # 给一个看得见的确认：设置窗挡着桌面，不提示的话用户以为没生效
+        self.lbl_hist_tip.setText(tr("hist_applied"))
         if self.win.tray:
             self.win.tray.showMessage(tr("hist_restored_t"),
                                       tr("hist_restored_b"),

@@ -11,8 +11,8 @@
 
 #define MyAppName        "念 ToMe"
 #define MyAppNameEn      "ToMe"
-#define MyAppVersion     "1.0.0"
-#define MyAppVerFull     "1.0.0.0"
+#define MyAppVersion     "1.1.1"
+#define MyAppVerFull     "1.1.1.0"
 #define MyAppExeName     "ToMe.exe"
 #define MyAppPublisher   "ToMe"
 #define MyAppURL         "https://example.invalid/ToMe"

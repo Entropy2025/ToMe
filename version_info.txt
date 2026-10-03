@@ -3,8 +3,8 @@
 # 安装包与「应用和功能」里显示的也是这些信息。
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 1, 0, 0),
-    prodvers=(1, 1, 0, 0),
+    filevers=(1, 1, 1, 0),
+    prodvers=(1, 1, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -20,12 +20,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'ToMe'),
             StringStruct('FileDescription', '念 ToMe — 桌面座右铭挂件'),
-            StringStruct('FileVersion', '1.1.0.0'),
+            StringStruct('FileVersion', '1.1.1.0'),
             StringStruct('InternalName', 'ToMe'),
             StringStruct('LegalCopyright', 'MIT License'),
             StringStruct('OriginalFilename', 'ToMe.exe'),
             StringStruct('ProductName', '念 ToMe'),
-            StringStruct('ProductVersion', '1.1.0.0')
+            StringStruct('ProductVersion', '1.1.1.0')
           ]
         )
       ]

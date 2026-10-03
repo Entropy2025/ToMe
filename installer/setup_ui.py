@@ -21,7 +21,7 @@ import threading
 
 APP_NAME = "念 ToMe"
 APP_NAME_EN = "ToMe"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 APP_EXE = "ToMe.exe"
 UNINST_EXE = "unins000.exe"
 PUBLISHER = "ToMe"
