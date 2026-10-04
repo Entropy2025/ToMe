@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout,
                                QSlider, QComboBox, QCheckBox, QSystemTrayIcon,
                                QMenu, QFrame, QGridLayout, QListWidget,
                                QListWidgetItem, QStackedWidget, QLineEdit,
-                               QMessageBox, QFileDialog)
+                               QMessageBox, QFileDialog, QSizePolicy)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -191,6 +191,7 @@ STR = {
         "hist_tip": "选中一条，点「恢复到桌面」放回桌面（双击也行）。置顶的不会被 100 条上限淘汰。",
         "hist_applied": "✓ 已恢复到桌面，关掉这个窗口就能看到",
         "hist_applied_more": "（恢复前的状态也存成了一条历史）",
+        "hist_nogeo": "无位置(旧记录)",
         "hist_clear_q": "确定清空未置顶的历史记录吗？\n置顶的记录会保留。",
         "hist_clear_t": "清空历史",
         "hist_clear_ok": "已清空未置顶的历史记录。",
@@ -258,6 +259,7 @@ STR = {
         "hist_tip": "Select an entry, then click \"Restore\" to put it back on the desktop (double-click works too). Pinned entries are never dropped by the 100-entry limit.",
         "hist_applied": "✓ Restored to the desktop — close this window to see it",
         "hist_applied_more": "(the previous state was saved as a new entry)",
+        "hist_nogeo": "no position (legacy)",
         "hist_clear_q": "Clear all unpinned history?\nPinned entries will be kept.",
         "hist_clear_t": "Clear history",
         "hist_clear_ok": "Unpinned history cleared.",
@@ -388,13 +390,20 @@ def set_autorun(on):
 
 
 def sync_autorun():
-    """启动时自愈：若已开启自启、但登记的是旧路径（程序被移动或重装过），
-    改写为当前路径，避免开机时去启动一个已经不存在的 exe。"""
+    """启动时自愈：登记的那个 exe 已经不存在了，才改写为当前路径。
+
+    为什么不是「路径不等于自己就改」：用户可能同时有安装版和便携版，
+    那样谁最后启动谁就把自启项抢走，安装版的自启会莫名其妙失效
+    （打包时跑一次 dist 下的 --selftest 就会触发）。
+    真正需要修的场景只有「程序被移动或卸载，旧路径已经没了」。"""
     cur = autorun_entry()
     if cur is None:
         return
-    if cur.strip().lower() != autorun_command().strip().lower():
-        dbg("autorun path stale, repairing")
+    registered = cur.strip().strip('"')
+    if os.path.exists(registered):
+        return
+    if registered.lower() != autorun_command().strip('"').lower():
+        dbg("autorun target missing (%s), repairing" % registered)
         set_autorun(True)
 
 
@@ -405,11 +414,12 @@ HISTORY_FILE = os.path.join(APPDATA_DIR, "history.json")
 HISTORY_MAX = 100          # 未置顶记录的条数上限（置顶的永久保留）
 HISTORY_FIELDS = ("text", "font_family", "font_pt", "bold", "italic",
                   "text_color", "text_alpha", "shadow_on", "border_color",
-                  "border_alpha", "line_gap", "align")
+                  "border_alpha", "line_gap", "align",
+                  "x", "y", "w", "h")   # 位置尺寸一起存，恢复时挪回原处
 
 
 def history_snapshot(cfg):
-    """抽一份外观快照（不含窗口位置与大小）。"""
+    """抽一份快照：文字 + 全部外观样式 + 位置尺寸。"""
     return {k: cfg.get(k, DEFAULT_CFG.get(k)) for k in HISTORY_FIELDS}
 
 
@@ -500,6 +510,12 @@ def hist_style_line(e):
     ba = int(e.get("border_alpha", 0) or 0)
     if ba > 0:
         parts.append("%s %d%%" % (tr("border_alpha"), ba))
+    # 标明这条含不含位置：旧版本的历史没记录位置，恢复时不会挪窗口，
+    # 直接写在预览里，免得用户以为是坏的。
+    if all(isinstance(e.get(k), (int, float)) for k in ("x", "y", "w", "h")):
+        parts.append("位置 %d,%d" % (int(e["x"]), int(e["y"])))
+    else:
+        parts.append(tr("hist_nogeo"))
     return " · ".join(parts)
 
 
@@ -739,6 +755,9 @@ class MottoWindow(QWidget):
         self.setGeometry(int(cfg["x"]), int(cfg["y"]),
                          int(cfg["w"]), int(cfg["h"]))
         self.setMinimumSize(120, 60)
+        # 恢复历史时置 True：让 auto_fit 别重算尺寸、更别挪窗口，
+        # 否则刚设好的历史几何会被它覆盖掉（位置就是这么丢的）。
+        self.suppress_autofit = False
 
         # 心跳自愈：每 20 秒确认窗口仍在壁纸层，丢失则重新挂（Explorer 重启等）
         self._hb = QTimer(self)
@@ -843,6 +862,8 @@ class MottoWindow(QWidget):
         """字号/行距/字体变化后，窗口贴合文字尺寸（可扩可缩，不裁字）。"""
         if not self.editing:
             return
+        if self.suppress_autofit:
+            return   # 正在恢复历史：几何以历史记录为准，不许重算
         cfg = self.cfg
         font = QFont(cfg["font_family"], int(round(cfg["font_pt"])))
         font.setBold(bool(cfg["bold"]))
@@ -867,9 +888,9 @@ class MottoWindow(QWidget):
         # 拖拽缩放中不回缩（避免与手动操作打架）
         if not self.resizing:
             self.resize(need_w, need_h)
-        # 高度变化后若底部出屏，整体上移
-        if self.y() + self.height() > ag.bottom():
-            self.move(self.x(), ag.bottom() - self.height())
+        # 注意：这里**故意不移动窗口**。曾经有过「底部出屏就整体上移」，
+        # 结果是用户摆好的位置会被程序自己挪走，而且恢复历史时刚设好的
+        # 位置也会被覆盖。位置归用户管，程序只负责贴合尺寸。
 
     def start_edit(self):
         if self.editing:
@@ -984,6 +1005,8 @@ class MottoWindow(QWidget):
     def mouseReleaseEvent(self, ev):
         if self.editing and (self.dragging or self.resizing):
             save_cfg(self.cfg)  # 位置/大小改动立即保存
+            dbg("drag/resize saved -> x=%d y=%d %dx%d"
+                % (self.x(), self.y(), self.width(), self.height()))
         self.dragging = self.resizing = False
         super().mouseReleaseEvent(ev)
 
@@ -1753,35 +1776,35 @@ class SettingsDialog(QDialog):
         self.lbl_hist_prev.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         v4.addWidget(self.lbl_hist_prev)
 
-        hb1 = QHBoxLayout()
-        hb1.setSpacing(6)
+        # 六个按钮排成 3×2 网格，列宽均分。
+        # 踩过的坑：先前按最长文案给固定宽度 99px，但这一页可用宽度只有
+        # ~356px（对话框 560 − 导航 112 − 两侧内边距），一行塞 4 个要 414px，
+        # 直接横向挤到一起。网格均分列宽既保证等宽，又不会溢出，中英文都稳。
         self.b_hist_restore = QPushButton()
         self.b_hist_restore.setObjectName("hist_primary")
         self.b_hist_pin = QPushButton()
         self.b_hist_del = QPushButton()
         self.b_hist_copy = QPushButton()
-        for _b in (self.b_hist_restore, self.b_hist_pin,
-                   self.b_hist_del, self.b_hist_copy):
-            _b.setCursor(Qt.PointingHandCursor)
-            hb1.addWidget(_b)
-        hb1.addStretch(1)
+        self.b_hist_export = QPushButton()
+        self.b_hist_clear = QPushButton()
+        gb = QGridLayout()
+        gb.setSpacing(6)
+        for _r, _row in enumerate((
+                (self.b_hist_restore, self.b_hist_pin, self.b_hist_del),
+                (self.b_hist_copy, self.b_hist_export, self.b_hist_clear))):
+            for _c, _b in enumerate(_row):
+                _b.setCursor(Qt.PointingHandCursor)
+                _b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                gb.addWidget(_b, _r, _c)
+        for _c in range(3):
+            gb.setColumnStretch(_c, 1)
         self.b_hist_restore.clicked.connect(self.hist_restore)
         self.b_hist_pin.clicked.connect(self.hist_toggle_pin)
         self.b_hist_del.clicked.connect(self.hist_delete)
         self.b_hist_copy.clicked.connect(self.hist_copy)
-        v4.addLayout(hb1)
-
-        hb2 = QHBoxLayout()
-        hb2.setSpacing(6)
-        self.b_hist_export = QPushButton()
-        self.b_hist_clear = QPushButton()
-        for _b in (self.b_hist_export, self.b_hist_clear):
-            _b.setCursor(Qt.PointingHandCursor)
-            hb2.addWidget(_b)
-        hb2.addStretch(1)
         self.b_hist_export.clicked.connect(self.hist_export)
         self.b_hist_clear.clicked.connect(self.hist_clear)
-        v4.addLayout(hb2)
+        v4.addLayout(gb)
 
         self.stack.addWidget(self._wrap(card4))
 
@@ -1897,7 +1920,6 @@ class SettingsDialog(QDialog):
         self.b_hist_export.setText(tr("hist_export"))
         self.b_hist_clear.setText(tr("hist_clear"))
         self.rebuild_hist()
-        self.sync_hist_widths()
         for _i, _k in enumerate(("sec_text", "sec_style", "sec_misc",
                                  "sec_history")):
             self.nav.item(_i).setText(tr(_k))
@@ -2069,11 +2091,18 @@ class SettingsDialog(QDialog):
         self.lst_hist.clear()
         for e in self.hist_view:
             when = history_time_str(e.get("ts", 0))
-            first = (e.get("text") or "").strip().split("\n")[0][:22]
+            first = (e.get("text") or "").strip().split("\n")[0][:14]
             if not first:
                 first = "(空)"
             mark = "📌 " if e.get("pinned") else ""
-            it = QListWidgetItem("%s%s  %s" % (mark, when, first))
+            # 位置直接显示在行上：很多条历史文字完全一样，只靠文字根本分不清
+            # 哪条是「上面那版」哪条是「下面那版」，只能靠它来挑。
+            if all(isinstance(e.get(k), (int, float))
+                   for k in ("x", "y", "w", "h")):
+                pos = "y%d" % int(e["y"])
+            else:
+                pos = tr("hist_nogeo")
+            it = QListWidgetItem("%s%s  %s  %s" % (mark, when, pos, first))
             f = it.font()
             f.setBold(bool(e.get("pinned")))
             it.setFont(f)
@@ -2112,21 +2141,6 @@ class SettingsDialog(QDialog):
         """双击一条历史 = 恢复到桌面（比去点按钮顺手）。"""
         self.hist_restore()
 
-    def sync_hist_widths(self):
-        """六个按钮统一宽度。
-        各按钮文案长短不一（「恢复到桌面」5 字 vs「删除」2 字），
-        默认会各自贴合文字，排在一起宽窄不齐很难看。这里按最长的那条统一。"""
-        btns = (self.b_hist_restore, self.b_hist_pin, self.b_hist_del,
-                self.b_hist_copy, self.b_hist_export, self.b_hist_clear)
-        keep = self.b_hist_pin.text()
-        self.b_hist_pin.setText(tr("hist_unpin"))   # 「取消置顶」是最长的
-        for b in btns:
-            b.ensurePolished()
-        w = max(b.sizeHint().width() for b in btns)
-        for b in btns:
-            b.setFixedWidth(w)
-        self.b_hist_pin.setText(keep)
-
     def hist_write(self):
         """内存 → 磁盘（顺带做上限淘汰）。"""
         self.hist = trim_history(self.hist)
@@ -2146,8 +2160,24 @@ class SettingsDialog(QDialog):
         self.txt.setPlainText(truncate_lines(cfg["text"]))
         self.prev_text = self.txt.toPlainText()
         self.guard = False
-        self.apply_values()            # 滑杆/开关/对齐同步到恢复后的值
-        self.on_changed()              # 落盘 + 桌面重绘
+        # 位置尺寸一起还原（旧版本的历史没有 x/y/w/h，那就保持当前位置不动）。
+        # 关键：整个恢复过程必须屏蔽 auto_fit —— 它会按文字重算尺寸，
+        # 并且曾经会在底部出屏时 move() 窗口，把刚设好的历史位置冲掉。
+        # 之前「文字/字体变了但位置没变」就是被它覆盖的。
+        geo = [e.get(k) for k in ("x", "y", "w", "h")]
+        has_geo = all(isinstance(v, (int, float)) for v in geo)
+        self.win.suppress_autofit = has_geo
+        try:
+            if has_geo:
+                self.win.setGeometry(int(geo[0]), int(geo[1]),
+                                     int(geo[2]), int(geo[3]))
+                self.win.ensure_on_screen()
+                dbg("hist restore geometry -> %s" % (geo,))
+            self.apply_values()        # 滑杆/开关/对齐同步到恢复后的值
+            self.on_changed()          # 落盘 + 桌面重绘
+        finally:
+            self.win.suppress_autofit = False
+        save_cfg(cfg)                  # 以实际窗口几何为准再落一次盘
         self.hist = load_history()
         self.rebuild_hist(keep_ts=e.get("ts"))
         # 给一个看得见的确认：设置窗挡着桌面，不提示的话用户以为没生效

@@ -8,6 +8,7 @@
 测试前会保存用户原有的 Run\\ToMe 值，测试结束后原样还原，
 所以不会改变用户「开机自启」的真实状态。
 """
+import os
 import sys
 
 import motto_qt as m
@@ -78,6 +79,22 @@ def main():
         m.sync_autorun()
         check("已是当前路径时 sync_autorun 不动它",
               read_run_value(), before)
+
+        # --- 4b. 登记的路径存在、但指向另一个副本 → 不许抢走 ---
+        # （安装版 + 便携版共存时，谁后启动谁抢自启项 —— 这是真实踩过的坑）
+        print("\n3b. 指向别的副本时不抢")
+        import winreg
+        other = os.path.join(os.environ.get("WINDIR", r"C:\Windows"),
+                             "notepad.exe")
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, m.RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, m.RUN_VALUE, 0, winreg.REG_SZ,
+                              '"%s"' % other)
+        m.sync_autorun()
+        check("目标文件存在 → 保持原样",
+              read_run_value(), '"%s"' % other)
+        check("确实没被改成本程序",
+              read_run_value() != m.autorun_command(), True)
 
         # --- 5. 再关一次 ---
         print("\n4. 再次关闭")

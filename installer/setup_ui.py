@@ -39,6 +39,35 @@ def app_dir():
     return os.path.join(LOCALAPPDATA, "Programs", "ToMe")
 
 
+def existing_install_dir():
+    """读注册表里已登记的安装位置（用户可能改装到了 D:\\Program Files 等）。
+
+    没有这一步，再跑一次安装包就会在默认目录又装一份，
+    结果就是「装是装了，用的还是旧的那份」——用户和开发者都会被绕死。"""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINST_KEY) as k:
+            v, _ = winreg.QueryValueEx(k, "InstallLocation")
+            if v and os.path.isdir(v) and \
+                    os.path.exists(os.path.join(v, APP_EXE)):
+                return v
+    except OSError:
+        pass
+    return None
+
+
+def default_target_dir():
+    """升级时沿用原安装位置，首次安装才用默认目录。"""
+    return existing_install_dir() or app_dir()
+
+
+def running_dir():
+    """本程序所在目录（卸载器 unins000.exe 就放在安装目录里）。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return ""
+
+
 def start_menu_dir():
     return os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows",
                         "Start Menu", "Programs")
@@ -236,7 +265,7 @@ def run_gui():
         row=1, column=0, columnspan=3, sticky="w", pady=(2, 12))
 
     ttk.Label(frm, text="安装位置：").grid(row=2, column=0, sticky="w")
-    dir_var = tk.StringVar(value=app_dir())
+    dir_var = tk.StringVar(value=default_target_dir())
     ttk.Entry(frm, textvariable=dir_var, width=44).grid(
         row=2, column=1, sticky="we", padx=(0, 6))
 
@@ -273,7 +302,7 @@ def run_gui():
     def worker():
         bar.start(12)
         try:
-            do_install(dir_var.get().strip() or app_dir(),
+            do_install(dir_var.get().strip() or default_target_dir(),
                        desk_var.get(), run_var.get(), log)
         except Exception as e:  # noqa: BLE001
             bar.stop()
@@ -301,10 +330,20 @@ def run_gui():
 
 def main():
     args = sys.argv[1:]
+    # 卸载：以「卸载器自己所在的目录」为准（unins000.exe 就放在安装目录里），
+    # 这样不管当初装到 C 盘还是 D 盘，卸载的都对。
+    un_dir = running_dir() or default_target_dir()
+
+    # 可选：--dir=<路径> 指定安装位置（GUI 向导里也能改）
+    forced = None
+    for a in args:
+        if a.startswith("--dir="):
+            forced = a.split("=", 1)[1].strip().strip('"')
+
     if "--uninstall" in args:
         silent = "--silent" in args
         if silent:
-            do_uninstall(app_dir(), lambda _m: None)
+            do_uninstall(un_dir, lambda _m: None)
             return 0
         import tkinter as tk
         from tkinter import messagebox
@@ -312,13 +351,15 @@ def main():
         r.withdraw()
         if messagebox.askyesno("卸载 %s" % APP_NAME,
                                "确定要卸载 %s 吗？" % APP_NAME):
-            do_uninstall(app_dir(), lambda _m: None)
+            do_uninstall(un_dir, lambda _m: None)
             messagebox.showinfo("卸载完成", "%s 已卸载。" % APP_NAME)
         r.destroy()
         return 0
 
     if "--silent" in args:
-        do_install(app_dir(), True, True, lambda _m: None)
+        # 静默安装：默认沿用原安装位置，避免又装出一份新的
+        do_install(forced or default_target_dir(), True, True,
+                   lambda _m: None)
         return 0
 
     return run_gui()

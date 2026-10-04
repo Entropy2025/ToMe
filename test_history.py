@@ -52,8 +52,9 @@ def main():
     check("含透明度/投影/行距/对齐",
           all(k in snap for k in ("text_alpha", "shadow_on", "line_gap", "align")),
           True)
-    check("不含窗口位置 x", "x" in snap, False)
-    check("不含窗口大小 w/h", ("w" in snap) or ("h" in snap), False)
+    # v1.1.1 起：位置尺寸也进快照（每条历史 = 文字 + 样式 + 位置 的一整套）
+    check("含窗口位置 x/y", all(k in snap for k in ("x", "y")), True)
+    check("含窗口大小 w/h", all(k in snap for k in ("w", "h")), True)
 
     # ---------- 2. 落一条 + 去重 ----------
     print("\n2. 落一条 / 完全相同不重复记")
